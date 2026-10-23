@@ -1,0 +1,165 @@
+:root {
+  --bg: #fdfdfc;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #2563eb;
+  --code-bg: #f3f4f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --line: #2a3038;
+    --accent: #6ea8fe;
+    --code-bg: #1b2027;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Segoe UI", sans-serif;
+  font-size: 17px;
+  line-height: 1.75;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* Header & footer */
+.site-header {
+  border-bottom: 1px solid var(--line);
+}
+.site-header .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+.site-title {
+  color: var(--fg);
+  font-weight: 700;
+  font-size: 20px;
+}
+.site-header nav { display: flex; gap: 16px; }
+.site-header nav a { color: var(--muted); font-size: 15px; }
+.site-header nav a:hover { color: var(--fg); text-decoration: none; }
+
+main.wrap { padding-top: 40px; padding-bottom: 64px; }
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+.site-footer .wrap { padding-top: 24px; padding-bottom: 32px; }
+
+/* Home */
+.intro h1 { margin: 0 0 4px; font-size: 32px; line-height: 1.3; }
+.intro p { margin: 0 0 40px; color: var(--muted); }
+
+.archive h2 {
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 32px 0 8px;
+}
+
+.post-list { list-style: none; margin: 0; padding: 0; }
+.post-list li {
+  display: flex;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.post-list time {
+  flex: none;
+  min-width: 48px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  padding-top: 2px;
+}
+.post-list a { color: var(--fg); font-weight: 600; }
+.post-list p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+
+/* Post */
+.post-header h1 { margin: 0 0 8px; font-size: 32px; line-height: 1.35; }
+.meta { margin: 0 0 32px; color: var(--muted); font-size: 15px; }
+.tag { margin-left: 10px; color: var(--muted); }
+
+.post-body h2 { margin-top: 2em; font-size: 24px; line-height: 1.4; }
+.post-body h3 { margin-top: 1.6em; font-size: 20px; }
+.post-body img { max-width: 100%; height: auto; border-radius: 6px; }
+.post-body blockquote {
+  margin: 1.2em 0;
+  padding: 0 16px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+.post-body table { border-collapse: collapse; display: block; overflow-x: auto; }
+.post-body th, .post-body td { border: 1px solid var(--line); padding: 6px 12px; }
+.post-body hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "D2Coding", monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+pre {
+  background: var(--code-bg);
+  padding: 14px 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+pre code { background: none; padding: 0; }
+
+.post-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 56px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+}
+
+/* Syntax highlighting (rouge) */
+.highlight .c, .highlight .c1, .highlight .cm { color: var(--muted); font-style: italic; }
+.highlight .k, .highlight .kd, .highlight .kn, .highlight .nb { color: #c2410c; }
+.highlight .s, .highlight .s1, .highlight .s2 { color: #15803d; }
+.highlight .m, .highlight .mi, .highlight .mf { color: #7c3aed; }
+.highlight .nf, .highlight .nc { color: var(--accent); }
+
+@media (prefers-color-scheme: dark) {
+  .highlight .k, .highlight .kd, .highlight .kn, .highlight .nb { color: #fb923c; }
+  .highlight .s, .highlight .s1, .highlight .s2 { color: #4ade80; }
+  .highlight .m, .highlight .mi, .highlight .mf { color: #a78bfa; }
+}
+
+@media (max-width: 480px) {
+  body { font-size: 16px; }
+  .intro h1, .post-header h1 { font-size: 26px; }
+}

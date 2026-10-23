@@ -1,0 +1,23 @@
+---
+layout: default
+title: 태그
+permalink: /tags/
+---
+<h1>태그</h1>
+
+{% assign tags = site.tags | sort %}
+{% for tag in tags %}
+<section class="archive" id="{{ tag[0] | slugify }}">
+  <h2>#{{ tag[0] }}</h2>
+  <ul class="post-list">
+    {% for post in tag[1] %}
+    <li>
+      <time datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: '%Y.%m.%d' }}</time>
+      <div><a href="{{ post.url | relative_url }}">{{ post.title }}</a></div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<p>아직 태그가 없습니다.</p>
+{% endfor %}
