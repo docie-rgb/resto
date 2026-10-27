@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>배틀쉽</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>배틀쉽</h1>
+    <div id="turn" class="turn">준비</div>
+  </header>
+
+  <main class="boards">
+    <section class="panel" id="player-panel">
+      <h2>내 함대</h2>
+      <div class="board" id="player-board"></div>
+      <ul class="fleet" id="player-fleet"></ul>
+    </section>
+    <section class="panel" id="cpu-panel">
+      <h2>CPU 함대</h2>
+      <div class="board" id="cpu-board"></div>
+      <ul class="fleet" id="cpu-fleet"></ul>
+    </section>
+  </main>
+
+  <p id="message" class="message"></p>
+
+  <footer class="controls">
+    <div class="nuke-status">
+      <div class="nuke-row"><span class="who">나</span><span id="player-nuke"></span></div>
+      <div class="nuke-row"><span class="who">CPU</span><span id="cpu-nuke"></span></div>
+    </div>
+    <div class="buttons">
+      <button id="btn-reroll" type="button">배치 변경</button>
+      <button id="btn-start" type="button" class="primary">게임 시작</button>
+      <button id="btn-nuke" type="button" class="nuke">☢ 핵폭탄 사용</button>
+      <button id="btn-cancel" type="button">취소</button>
+      <button id="btn-restart" type="button" class="primary">다시 시작</button>
+    </div>
+  </footer>
+
+  <script src="game.js"></script>
+  <script src="ai.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>

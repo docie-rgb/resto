@@ -1,0 +1,213 @@
+:root {
+  --bg: #050a18;
+  --panel: #0c1428;
+  --line: #22304f;
+  --text: #e6e8ee;
+  --muted: #8a93aa;
+  --sea: #0b2a5b;
+  --sea-hover: #2160b8;
+  --sea-safe: #081d40;
+  --ship: #7d848f;
+  --hit: #ff3b3b;
+  --sunk: #6b0f12;
+  --nuke: rgba(255, 140, 0, 0.5);
+  --player: #6ea8fe;
+  --cpu: #ff8a65;
+  --cell: min(3.6vw, 5.4vh);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  user-select: none;
+}
+
+/* ---------- 상단 ---------- */
+.top { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 20px; }
+.top h1 { margin: 0; font-size: 1.6rem; letter-spacing: 0.08em; white-space: nowrap; }
+.turn {
+  min-width: 16rem;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  text-align: center;
+  font-weight: 600;
+}
+.turn.player { border-color: var(--player); color: var(--player); }
+.turn.cpu { border-color: var(--cpu); color: var(--cpu); }
+.turn.targeting { border-color: orange; color: orange; }
+.turn.victory { border-color: #4ade80; color: #4ade80; font-size: 1.4rem; }
+.turn.defeat { border-color: var(--hit); color: var(--hit); font-size: 1.4rem; }
+.turn.flash { animation: turn-flash 0.5s ease-out; }
+@keyframes turn-flash {
+  from { transform: scale(1.12); box-shadow: 0 0 18px currentColor; }
+  to { transform: scale(1); box-shadow: none; }
+}
+
+/* ---------- 격자 ---------- */
+.boards { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; }
+.panel {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px 12px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.panel h2 { margin: 0 0 6px; font-size: 1rem; color: var(--muted); }
+/* 현재 공격 대상이 되는 격자를 강조 */
+.panel.active-target { border-color: var(--player); box-shadow: 0 0 14px rgba(110, 168, 254, 0.35); }
+.panel.under-fire { border-color: var(--cpu); box-shadow: 0 0 14px rgba(255, 138, 101, 0.35); }
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(11, var(--cell));
+  grid-template-rows: repeat(11, var(--cell));
+  gap: 2px;
+}
+.label {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  font-size: calc(var(--cell) * 0.38);
+}
+
+.cell {
+  position: relative;
+  background: var(--sea);
+  border: 1px solid #16407f;
+  border-radius: 2px;
+}
+.cell.ship { background: var(--ship); border-color: #9aa1ac; }
+.cell.safe { background: var(--sea-safe); border-color: #10284f; }
+.cell.sunk { background: var(--sunk); border-color: #a3232a; }
+.cell.last { outline: 2px solid var(--cpu); outline-offset: -1px; z-index: 1; }
+
+/* 빨간 X (명중 / 격침) */
+.cell.hit::before, .cell.hit::after {
+  content: "";
+  position: absolute;
+  left: 15%; top: 45%;
+  width: 70%; height: 12%;
+  background: var(--hit);
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.cell.hit::after { transform: rotate(-45deg); }
+.cell.sunk::before, .cell.sunk::after { background: #ff7b7b; }
+
+/* 흰색 점 (빗나감) / 흐린 점 (확인된 바다) */
+.cell.miss::after, .cell.safe::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 26%; height: 26%;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+}
+.cell.safe::after { width: 14%; height: 14%; background: rgba(255, 255, 255, 0.25); }
+
+/* 마우스 호버: 공격 가능 / 불가 */
+.board.can-fire .cell.open { cursor: crosshair; }
+.board.can-fire .cell.open:hover { background: var(--sea-hover); }
+.board.can-fire .cell:not(.open),
+.board.targeting .cell.nuke-invalid { cursor: not-allowed; }
+.board.can-fire .cell:not(.open):hover { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35); }
+
+/* 핵폭탄 조준 범위 (반투명 주황) */
+.board.targeting .cell { cursor: crosshair; }
+.cell.nuke-preview { box-shadow: inset 0 0 0 100px var(--nuke); }
+.cell.nuke-preview.nuke-invalid { box-shadow: inset 0 0 0 100px rgba(150, 150, 150, 0.45); }
+
+/* ---------- 효과 ---------- */
+.fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 50%;
+  z-index: 2;
+}
+.fx.fx-hit { animation: fx-hit 0.55s ease-out forwards; }
+.fx.fx-miss { animation: fx-miss 0.6s ease-out forwards; }
+.fx.fx-sunk { border-radius: 2px; animation: fx-sunk 0.9s ease-out forwards; }
+.fx.fx-nuke { border-radius: 2px; animation: fx-nuke 0.8s ease-out forwards; }
+
+/* 포탄이 떨어지며 폭발 */
+@keyframes fx-hit {
+  0%   { transform: scale(0.2); background: radial-gradient(circle, #fff 0%, #ffd34d 40%, transparent 70%); opacity: 1; }
+  50%  { transform: scale(1.7); background: radial-gradient(circle, #ffd34d 0%, #ff5a1f 45%, transparent 70%); opacity: 1; }
+  100% { transform: scale(2.2); background: radial-gradient(circle, #ff5a1f 0%, transparent 65%); opacity: 0; }
+}
+/* 물보라 */
+@keyframes fx-miss {
+  0%   { transform: scale(0.2); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9); opacity: 1; }
+  100% { transform: scale(1.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2); opacity: 0; }
+}
+/* 격침 강조 */
+@keyframes fx-sunk {
+  0%, 40%, 80% { box-shadow: 0 0 0 2px #ff5252, 0 0 16px #ff1f1f; }
+  20%, 60%     { box-shadow: 0 0 0 1px #ff5252; }
+  100%         { box-shadow: none; }
+}
+/* 핵폭탄 3×3 폭발 */
+@keyframes fx-nuke {
+  0%   { background: rgba(255, 255, 255, 0.95); }
+  30%  { background: rgba(255, 170, 30, 0.85); }
+  100% { background: rgba(255, 90, 0, 0); }
+}
+
+/* ---------- 함대 현황 ---------- */
+.fleet {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  max-width: calc(var(--cell) * 11 + 20px);
+}
+.fleet li { display: flex; gap: 2px; }
+.fleet li span { width: 10px; height: 10px; background: var(--ship); border-radius: 2px; }
+.fleet li.sunk span { background: var(--sunk); }
+.fleet li.sunk { opacity: 0.6; }
+
+/* ---------- 하단 ---------- */
+.message { margin: 0; min-height: 1.5em; font-weight: 600; text-align: center; }
+.message.sunk-msg { color: #ff7b7b; }
+
+.controls { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; justify-content: center; }
+.nuke-status { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; }
+.nuke-row { display: flex; align-items: center; gap: 8px; }
+.nuke-row .who { width: 2.5em; color: var(--muted); }
+.nuke-icon { font-size: 1.1rem; opacity: 0.25; }
+.nuke-icon.on { opacity: 1; color: orange; text-shadow: 0 0 8px orange; }
+.pips { display: inline-flex; gap: 3px; margin-left: 4px; }
+.pips i { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--muted); }
+.pips i.on { background: var(--muted); }
+.nuke-text { color: var(--muted); }
+
+.buttons { display: flex; gap: 8px; }
+button {
+  padding: 8px 16px;
+  font: inherit;
+  color: var(--text);
+  background: #1c2742;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #26365c; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary { background: #2a5bd7; border-color: #2a5bd7; }
+button.primary:hover { background: #3a6ae6; }
+button.nuke:not(:disabled) { border-color: orange; color: orange; }
+[hidden] { display: none !important; }
