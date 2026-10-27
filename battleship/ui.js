@@ -8,6 +8,8 @@
 
   const B = window.Battleship;
   const AI = window.BattleshipAI;
+  const Sound = window.BattleshipSound;
+  const Ships = window.BattleshipShips;
   const S = B.STATE;
 
   const RESOLVE_MS = 450;   // 포격 결과를 보여주는 동안 입력 차단
@@ -44,13 +46,16 @@
 
   // ---------- 격자 생성 ----------
 
-  /** 좌표 라벨(A~J, 1~10)과 100개 칸을 만들고, 칸 요소 배열을 돌려준다. */
+  /**
+   * 좌표 라벨(A~J, 1~10)과 100개 칸을 만들고, 칸 요소 배열을 돌려준다.
+   * 함선 이미지를 칸 위에 겹쳐 놓을 수 있도록 모든 요소의 격자 위치를 직접 지정한다.
+   */
   function buildBoard(container) {
     const cells = [];
-    container.appendChild(label(''));
-    for (let c = 0; c < B.SIZE; c++) container.appendChild(label(String.fromCharCode(65 + c)));
+    container.appendChild(place(label(''), 0, 0));
+    for (let c = 0; c < B.SIZE; c++) container.appendChild(place(label(String.fromCharCode(65 + c)), 0, c + 1));
     for (let r = 0; r < B.SIZE; r++) {
-      container.appendChild(label(String(r + 1)));
+      container.appendChild(place(label(String(r + 1)), r + 1, 0));
       for (let c = 0; c < B.SIZE; c++) {
         const el = document.createElement('div');
         el.className = 'cell';
@@ -58,11 +63,17 @@
         const fx = document.createElement('span');
         fx.className = 'fx';
         el.appendChild(fx);
-        container.appendChild(el);
+        container.appendChild(place(el, r + 1, c + 1));
         cells.push(el);
       }
     }
     return cells;
+  }
+
+  function place(el, row, col) {
+    el.style.gridRow = row + 1;
+    el.style.gridColumn = col + 1;
+    return el;
   }
 
   function label(text) {
@@ -70,6 +81,32 @@
     el.className = 'label';
     el.textContent = text;
     return el;
+  }
+
+  // 격자별 함선 이미지 { board, els }. 배치가 바뀌면(새 게임, 배치 변경) 다시 만든다.
+  const shipLayers = new Map();
+
+  function renderShips(boardEl, board, showAll) {
+    let layer = shipLayers.get(boardEl);
+    if (!layer || layer.board !== board) {
+      if (layer) layer.els.forEach((el) => el.remove());
+      const els = board.ships.map((s) => {
+        const el = document.createElement('div');
+        el.className = 'ship-img';
+        const r = B.rowOf(s.cells[0]) + 2, c = B.colOf(s.cells[0]) + 2;
+        el.style.gridRow = s.dir === 'V' ? `${r} / span ${s.length}` : r;
+        el.style.gridColumn = s.dir === 'H' ? `${c} / span ${s.length}` : c;
+        el.innerHTML = Ships.svg(s.length, s.dir);
+        boardEl.appendChild(el);
+        return el;
+      });
+      layer = { board, els };
+      shipLayers.set(boardEl, layer);
+    }
+    board.ships.forEach((s, k) => {
+      layer.els[k].hidden = !(showAll || s.sunk);
+      layer.els[k].classList.toggle('sunk', s.sunk);
+    });
   }
 
   const playerCells = buildBoard(els.playerBoard);
@@ -116,6 +153,8 @@
       }
       el.className = cls.join(' ');
     });
+    renderShips(els.playerBoard, game.player.board, true);
+    renderShips(els.cpuBoard, game.cpu.board, over);
     els.cpuBoard.classList.toggle('can-fire', playerCanFire);
     els.cpuBoard.classList.toggle('targeting', targeting);
 
@@ -159,8 +198,9 @@
     board.ships.slice().sort((a, b) => b.length - a.length).forEach((s) => {
       const li = document.createElement('li');
       if (s.sunk) li.className = 'sunk';
-      li.title = `${s.length}칸${s.sunk ? ' (격침)' : ''}`;
-      for (let k = 0; k < s.length; k++) li.appendChild(document.createElement('span'));
+      li.style.width = `${s.length * 16}px`;
+      li.innerHTML = Ships.svg(s.length, 'H');
+      li.title = `${Ships.NAMES[s.length]} ${s.length}칸${s.sunk ? ' (격침)' : ''}`;
       ul.appendChild(li);
     });
   }
@@ -170,7 +210,7 @@
     el.innerHTML =
       `<span class="nuke-icon ${side.nukes ? 'on' : ''}">☢</span>` +
       `<span class="nuke-text">${side.nukes}/${B.NUKE_MAX}</span>` +
-      `<span class="pips" title="다음 핵폭탄까지 일반 포격 ${side.nukeCounter}/${B.NUKE_EVERY}">${pips}</span>`;
+      `<span class="pips" title="다음 핵폭탄까지 턴 ${side.nukeCounter}/${B.NUKE_EVERY}">${pips}</span>`;
   }
 
   function setMessage(text, sunk = false) {
@@ -187,6 +227,11 @@
   }
 
   function playEffects(out) {
+    // 핵폭탄은 결과와 상관없이 폭발음 하나, 일반 포격은 명중/빗나감에 따라
+    if (out.kind === 'nuke') Sound.nuke();
+    else if (out.hit) Sound.hit();
+    else Sound.splash();
+
     const cells = out.attacker === 'player' ? cpuCells : playerCells;
     if (out.kind === 'nuke') out.area.forEach((i) => playFx(cells[i], 'fx-nuke'));
     out.results.forEach((r) => playFx(cells[r.index], r.result === 'hit' ? 'fx-hit' : 'fx-miss'));
@@ -206,7 +251,7 @@
     if (out.sunk.length) {
       parts.push(`함선 격침! (${out.sunk.map((s) => s.length + '칸').join(', ')})`);
     }
-    if (out.nukeGained) parts.push('핵폭탄 획득!');
+    if (out.nukeGainedBy) parts.push(out.nukeGainedBy === 'player' ? '내 턴 — 핵폭탄 획득!' : 'CPU가 핵폭탄을 획득했습니다.');
     if (!out.gameOver && out.hit) parts.push(out.attacker === 'player' ? '한 번 더 공격하세요.' : 'CPU가 계속 공격합니다.');
     return parts.join(' ');
   }
@@ -299,6 +344,8 @@
     if (game.enterNukeTargeting()) { setMessage('CPU 격자에서 3×3 중심을 클릭하세요. (Esc: 취소)'); render(); }
   });
   els.cancel.addEventListener('click', cancelNuke);
+  // 자동재생 정책: 사용자의 첫 입력 때 오디오를 연다 (이후 CPU 공격 소리도 재생 가능)
+  document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelNuke(); });
   els.restart.addEventListener('click', newGame);
 

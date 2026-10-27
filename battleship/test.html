@@ -151,22 +151,32 @@ test('격침 판정', () => {
 
 // ================= 14.3 핵폭탄 =================
 section('14.3 핵폭탄');
-test('획득 규칙', () => {
+test('획득 규칙 (턴 단위)', () => {
   const g = new B.Game({ playerShips: FIXED, cpuShips: FIXED });
   g.start();
-  // 명중 4번 + 빗나감 1번 = 5회 → 1개
+  check('첫 턴 시작 시 게이지 1', g.player.nukeCounter === 1 && g.cpu.nukeCounter === 0);
+  // 같은 턴의 연속 명중은 게이지를 올리지 않는다.
   ['A1', 'B1', 'C1', 'D1'].forEach((c) => { g.fire('player', idx(c)); g.finishResolve(); });
-  check('4회까지는 미획득', g.player.nukes === 0 && g.player.nukeCounter === 4);
-  const r = g.fire('player', idx('J10'));
-  check('연속 명중 포함 일반 포격 5회 → 핵폭탄 1개', g.player.nukes === 1 && r.nukeGained && g.player.nukeCounter === 0);
-  g.finishResolve();
-  // CPU가 빗나가 턴 반환, 플레이어가 5회 더 포격
-  g.fire('cpu', idx('J10')); g.finishResolve();
-  const miss = empties(g.cpu.board);
-  let k = 0;
+  check('연속 명중 4회는 같은 턴 → 게이지 그대로', g.player.nukeCounter === 1 && g.player.nukes === 0);
+  const toCpu = g.fire('player', idx('J10')); g.finishResolve();
+  check('턴이 넘어가면 상대 게이지 +1', g.cpu.nukeCounter === 1 && g.player.nukeCounter === 1 && toCpu.nukeGainedBy === null);
+
+  // 서로 빗나가며 턴을 주고받는다: 플레이어 턴이 5번째로 시작될 때 획득
+  const cpuMiss = empties(g.cpu.board), playerMiss = empties(g.player.board);
+  let k = 0, gained = null;
+  while (g.player.nukes === 0 && k < 10) {
+    const out = g.fire('cpu', playerMiss[k]); g.finishResolve();
+    if (out.nukeGainedBy === 'player') gained = g.player.nukeCounter;
+    if (g.player.nukes) break;
+    g.fire('player', cpuMiss[k++]); g.finishResolve();
+  }
+  check('자기 턴 5번 시작마다 핵폭탄 1개, 게이지 0으로', g.player.nukes === 1 && gained === 0 && k === 3, `플레이어 빗나감 ${k}회 후`);
+  check('CPU도 같은 규칙', g.cpu.nukeCounter === 4 && g.cpu.nukes === 0);
+
+  // 보유 중에는 5턴이 더 지나도 추가 지급 없음
   for (let n = 0; n < 5; n++) {
-    if (g.state === S.CPU_TURN) { g.fire('cpu', empties(g.player.board)[0]); g.finishResolve(); }
-    g.fire('player', miss[k++]); g.finishResolve();
+    g.fire('player', cpuMiss[k++]); g.finishResolve();
+    g.fire('cpu', playerMiss[k]); g.finishResolve();
   }
   check('보유 중이면 추가 지급 없음 (최대 1개)', g.player.nukes === 1 && g.player.nukeCounter === 0);
 });
@@ -190,7 +200,7 @@ test('범위와 가장자리', () => {
   g.enterNukeTargeting();
   const out = g.nuke('player', idx('J10'));
   check('모서리 핵폭탄 정상 처리 (4칸 공격)', out && out.results.length === 4 && g.player.nukes === 0);
-  check('핵폭탄은 획득 카운트·일반 포격 횟수에 미포함', g.player.nukeCounter === 0 && g.player.shots === 0);
+  check('핵폭탄은 획득 카운트·일반 포격 횟수에 미포함', g.player.nukeCounter === 1 && g.player.shots === 0);
 });
 test('이미 공격한 칸 제외 / 빈 범위 사용 불가', () => {
   const g = nukeReadyGame();

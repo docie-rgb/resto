@@ -8,7 +8,7 @@
 
   const SIZE = 10;
   const FLEET = [5, 4, 4, 3, 3, 3, 2, 2, 2, 2]; // 10척, 30칸
-  const NUKE_EVERY = 5; // 일반 포격 5회마다 핵폭탄 1개
+  const NUKE_EVERY = 5; // 자기 턴이 5번 시작될 때마다 핵폭탄 1개 (명중으로 이어지는 연속 공격은 같은 턴)
   const NUKE_MAX = 1;   // 진영별 최대 보유량
 
   const STATE = Object.freeze({
@@ -197,7 +197,7 @@
     return {
       board: createBoard(ships), // 이 진영의 함대 (상대가 공격하는 격자)
       shots: 0,       // 총 일반 포격 횟수
-      nukeCounter: 0, // 핵폭탄 획득 카운트 (0~4)
+      nukeCounter: 0, // 핵폭탄 획득 카운트 (시작한 턴 수, 0~4)
       nukes: 0,       // 핵폭탄 보유량 (0~1)
       nukesUsed: 0,
       hits: [],       // 이 진영이 명중시킨 좌표
@@ -237,6 +237,7 @@
       if (this.state !== STATE.READY) return false;
       this.turn = 'player';
       this.state = STATE.PLAYER_TURN;
+      this._beginTurn(this.player); // 첫 턴도 게이지에 포함
       return true;
     }
 
@@ -258,16 +259,18 @@
       const r = attackCell(board, i);
       side.shots++;
       (r.result === 'hit' ? side.hits : side.misses).push(i);
-      const nukeGained = this._countShot(side);
 
       return this._afterAttack(attacker, {
         kind: 'shot', attacker, index: i, results: [r],
-        hit: r.result === 'hit', sunk: r.sunk ? [r.sunk] : [], nukeGained,
+        hit: r.result === 'hit', sunk: r.sunk ? [r.sunk] : [],
       });
     }
 
-    /** 일반 포격 1회를 카운트하고, 5회째면 핵폭탄 지급 (최대 1개) */
-    _countShot(side) {
+    /**
+     * 턴이 시작될 때 게이지를 1 올리고, 5번째면 핵폭탄 지급 (최대 1개).
+     * 명중으로 이어지는 추가 공격은 같은 턴이므로 게이지가 오르지 않는다.
+     */
+    _beginTurn(side) {
       side.nukeCounter++;
       if (side.nukeCounter < NUKE_EVERY) return false;
       side.nukeCounter = 0;
@@ -321,7 +324,6 @@
         kind: 'nuke', attacker, index: center, area: area3x3(center), results,
         hit: results.some((r) => r.result === 'hit'),
         sunk: results.filter((r) => r.sunk).map((r) => r.sunk),
-        nukeGained: false,
       });
     }
 
@@ -338,6 +340,9 @@
       this.turn = outcome.hit ? attacker : this.other(attacker);
       this.state = STATE.RESOLVING_ATTACK;
       this.pendingState = this.turn === 'player' ? STATE.PLAYER_TURN : STATE.CPU_TURN;
+      // 공격권이 상대에게 넘어갈 때만 상대의 새 턴이 시작된다.
+      const switched = this.turn !== attacker;
+      outcome.nukeGainedBy = switched && this._beginTurn(this[this.turn]) ? this.turn : null;
       outcome.gameOver = false;
       outcome.next = this.turn;
       return outcome;
