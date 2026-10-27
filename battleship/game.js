@@ -72,51 +72,154 @@
 
   // ---------- 함선 배치 ----------
 
-  /**
-   * 함대를 무작위로 배치한다.
-   * 큰 함선부터 "가능한 모든 위치"를 구해 섞은 뒤 하나씩 시도하고,
-   * 뒤의 함선을 놓을 수 없으면 되돌아가(백트래킹) 다른 위치를 시도한다.
-   * 후보가 유한하므로 무한 반복 없이 반드시 끝나며, 해가 있으면 반드시 찾는다.
-   */
-  function placeFleet(rng) {
-    const owner = new Array(SIZE * SIZE).fill(-1);
-    const ships = [];
-
-    // 비어 있고, 8방향 이웃에도 다른 함선이 없어야 놓을 수 있다.
-    const free = (i) => owner[i] === -1 && neighbors8(i).every((n) => owner[n] === -1);
-
-    function options(len) {
+  /** 길이 len 함선이 격자 안에 놓일 수 있는 모든 위치 (행 우선, 가로 먼저) */
+  const positionCache = new Map();
+  function positions(len) {
+    if (!positionCache.has(len)) {
       const out = [];
       for (let r = 0; r < SIZE; r++) {
         for (let c = 0; c < SIZE; c++) {
-          if (c + len <= SIZE) {
-            const cells = Array.from({ length: len }, (_, k) => toIndex(r, c + k));
-            if (cells.every(free)) out.push({ dir: 'H', cells });
-          }
-          if (len > 1 && r + len <= SIZE) {
-            const cells = Array.from({ length: len }, (_, k) => toIndex(r + k, c));
-            if (cells.every(free)) out.push({ dir: 'V', cells });
-          }
+          if (c + len <= SIZE) out.push({ dir: 'H', cells: Array.from({ length: len }, (_, k) => toIndex(r, c + k)) });
+          if (len > 1 && r + len <= SIZE) out.push({ dir: 'V', cells: Array.from({ length: len }, (_, k) => toIndex(r + k, c)) });
         }
       }
-      return out;
+      positionCache.set(len, out);
     }
+    return positionCache.get(len);
+  }
 
-    function place(k) {
-      if (k === FLEET.length) return true;
-      for (const opt of shuffle(options(FLEET[k]), rng)) {
-        opt.cells.forEach((i) => (owner[i] = k));
-        ships.push({ id: k, length: FLEET[k], dir: opt.dir, cells: opt.cells });
-        if (place(k + 1)) return true;
-        ships.pop();
-        opt.cells.forEach((i) => (owner[i] = -1));
+  /** 8방향 이웃 표 (배치 탐색에서 반복 호출되므로 미리 계산) */
+  const NEIGHBORS = Array.from({ length: SIZE * SIZE }, (_, i) => neighbors8(i));
+
+  /**
+   * 함대 배치를 탐색한다. (백트래킹)
+   * 큰 함선부터, 다른 함선과 겹치거나 상하좌우·대각선으로 닿지 않는 위치를 골라 놓고,
+   * 뒤의 함선을 놓을 수 없으면 되돌아가 다른 위치를 시도한다.
+   * 같은 길이의 함선은 위치 번호가 증가하는 순서로만 놓아 같은 배치를 중복 탐색하지 않는다.
+   * 탐색 노드 수가 budget 을 넘으면 포기(null)하므로 시간이 무한히 걸리지 않는다.
+   *
+   * @param {number[]} fleet 함선 길이 목록
+   * @param {'scan'|'transpose'|'random'} order 위치 시도 순서
+   */
+  function searchPlacement(fleet, order, rng, budget) {
+    const lens = fleet.slice().sort((a, b) => b - a);
+    const block = new Int16Array(SIZE * SIZE); // 0보다 크면 함선을 놓을 수 없는 칸 (점유 또는 인접)
+    const lists = new Map();
+    lens.forEach((len) => {
+      if (lists.has(len)) return;
+      let list = positions(len).slice();
+      if (order === 'transpose') list.sort((a, b) => colOf(a.cells[0]) - colOf(b.cells[0]) || rowOf(a.cells[0]) - rowOf(b.cells[0]) || (a.dir === 'V' ? -1 : 1));
+      if (order === 'random') shuffle(list, rng);
+      lists.set(len, list);
+    });
+
+    const mark = (cells, d) => cells.forEach((i) => {
+      block[i] += d;
+      NEIGHBORS[i].forEach((n) => (block[n] += d));
+    });
+    const chosen = [];
+    let nodes = 0;
+
+    function rec(k, from) {
+      if (k === lens.length) return true;
+      if (++nodes > budget) return false;
+      const list = lists.get(lens[k]);
+      for (let p = from; p < list.length; p++) {
+        const cells = list[p].cells;
+        if (!cells.every((i) => block[i] === 0)) continue;
+        mark(cells, 1);
+        chosen.push(list[p]);
+        const nextFrom = k + 1 < lens.length && lens[k + 1] === lens[k] ? p + 1 : 0;
+        if (rec(k + 1, nextFrom)) return true;
+        chosen.pop();
+        mark(cells, -1);
+        if (nodes > budget) return false;
       }
       return false;
     }
 
-    if (!place(0)) throw new Error('함대를 배치할 수 없습니다.');
-    return ships;
+    if (!rec(0, 0)) return null;
+    return chosen.map((p, id) => ({ id, length: p.cells.length, dir: p.dir, cells: p.cells.slice() }));
   }
+
+  /**
+   * 규칙(겹침·인접 금지)을 지키며 함대를 배치할 수 있는지 판정한다. 결과는 캐시한다.
+   * 촘촘한 배치를 잘 찾는 두 가지 순차 탐색 후 무작위 탐색을 몇 번 더 시도하며,
+   * 정해진 탐색량 안에 배치를 찾지 못하면 "불가"로 본다. (수량 상한이 실제보다 약간 보수적일 수 있음)
+   * 가능하면 찾아낸 배치 하나를 돌려준다.
+   */
+  const feasibleCache = new Map();
+  function findAnyPlacement(fleet) {
+    const key = fleet.slice().sort((a, b) => b - a).join(',');
+    if (feasibleCache.has(key)) return feasibleCache.get(key);
+    let found = null;
+    if (fleet.every((len) => len >= 1 && len <= SIZE)) {
+      // 금지 구역까지 포함하면 함선은 11×11 판에 (길이+1)×2 넓이를 차지한다.
+      const padded = fleet.reduce((sum, len) => sum + (len + 1) * 2, 0);
+      if (padded <= (SIZE + 1) * (SIZE + 1)) {
+        found = searchPlacement(fleet, 'scan', null, 20000) || searchPlacement(fleet, 'transpose', null, 20000);
+        const rng = mulberry32(fleet.length * 7919 + padded);
+        for (let t = 0; !found && t < 6; t++) found = searchPlacement(fleet, 'random', rng, 5000);
+      }
+    }
+    feasibleCache.set(key, found);
+    return found;
+  }
+
+  function canPlaceFleet(fleet) {
+    return findAnyPlacement(fleet) !== null;
+  }
+
+  /** 배치 전체를 뒤집거나 돌려 새 배치를 만든다. (8가지 대칭) */
+  function transformShips(ships, t) {
+    const map = (i) => {
+      let r = rowOf(i), c = colOf(i);
+      if (t & 1) c = SIZE - 1 - c;
+      if (t & 2) r = SIZE - 1 - r;
+      if (t & 4) [r, c] = [c, r];
+      return toIndex(r, c);
+    };
+    return ships.map((s) => {
+      const cells = s.cells.map(map).sort((a, b) => a - b);
+      const dir = s.length > 1 && rowOf(cells[0]) === rowOf(cells[1]) ? 'H' : (s.length > 1 ? 'V' : s.dir);
+      return { id: s.id, length: s.length, dir, cells };
+    });
+  }
+
+  /**
+   * 함대를 무작위로 배치한다.
+   * 무작위 탐색을 여러 번 시도하고, 아주 촘촘한 함대라 실패하면
+   * 미리 찾아 둔 배치를 무작위로 뒤집고 돌려서 사용한다. 배치 불가능한 함대면 예외.
+   */
+  function placeFleet(rng, fleet = FLEET) {
+    for (let t = 0; t < 30; t++) {
+      const ships = searchPlacement(fleet, 'random', rng, 3000);
+      if (ships) return ships;
+    }
+    const known = findAnyPlacement(fleet);
+    if (!known) throw new Error('함대를 배치할 수 없습니다.');
+    return transformShips(known, Math.floor(rng() * 8));
+  }
+
+  /** 함선 목록이 규칙(직선, 격자 내부, 겹침·인접 없음)을 지키는지 검사 */
+  function validateShips(ships) {
+    const owner = new Array(SIZE * SIZE).fill(-1);
+    for (let k = 0; k < ships.length; k++) {
+      const s = ships[k];
+      if (!s.cells || s.cells.length !== s.length || !s.length) return false;
+      for (let j = 0; j < s.cells.length; j++) {
+        const i = s.cells[j];
+        if (!(i >= 0 && i < SIZE * SIZE) || owner[i] !== -1) return false;
+        const expected = s.dir === 'V' ? s.cells[0] + j * SIZE : s.cells[0] + j;
+        if (i !== expected || (s.dir !== 'V' && rowOf(i) !== rowOf(s.cells[0]))) return false;
+        owner[i] = k;
+      }
+    }
+    return ships.every((s, k) => s.cells.every((i) => NEIGHBORS[i].every((n) => owner[n] === -1 || owner[n] === k)));
+  }
+
+  /** 함선 길이 목록이 같은 구성인지 (순서 무관) */
+  const sameFleet = (a, b) => a.slice().sort().join() === b.slice().sort().join();
 
   // ---------- 격자 ----------
 
@@ -130,6 +233,7 @@
     }));
     const copy = ships.map((s, id) => ({
       id, length: s.length, dir: s.dir, cells: s.cells.slice(), hits: [], sunk: false,
+      tag: s.tag, // 배치 화면에서 쓰는 식별자 (게임 규칙에는 사용하지 않음)
     }));
     copy.forEach((s) => s.cells.forEach((i) => (cells[i].shipId = s.id)));
     return { cells, ships: copy };
@@ -177,7 +281,7 @@
    * 공격자 입장에서 알 수 있는 정보만 담은 격자 상태.
    * CPU 전략은 이 값만 사용한다. (숨겨진 함선 위치는 포함하지 않음)
    * cells[i]: 'unknown' | 'miss' | 'hit'(미격침 함선) | 'sunk' | 'safe'(확인된 바다)
-   * remaining: 아직 격침되지 않은 함선 길이 목록 (함대 구성은 공개 정보)
+   * remaining: 아직 격침되지 않은 함선 길이 목록 (함대 구성은 공개 정보, 위치는 포함하지 않음)
    */
   function publicView(board) {
     const cells = board.cells.map((c) => {
@@ -186,8 +290,7 @@
       if (c.result === 'miss') return 'miss';
       return board.ships[c.shipId].sunk ? 'sunk' : 'hit';
     });
-    const remaining = FLEET.slice();
-    board.ships.filter((s) => s.sunk).forEach((s) => remaining.splice(remaining.indexOf(s.length), 1));
+    const remaining = board.ships.filter((s) => !s.sunk).map((s) => s.length);
     return { cells, remaining };
   }
 
@@ -209,13 +312,15 @@
     /**
      * @param {object} [opts]
      * @param {function} [opts.rng] 난수 함수 (기본 Math.random)
-     * @param {Array} [opts.playerShips] 테스트용 고정 배치
+     * @param {number[]} [opts.fleet] 함대 구성 (함선 길이 목록, 기본 FLEET)
+     * @param {Array} [opts.playerShips] 플레이어 배치 (없으면 무작위)
      * @param {Array} [opts.cpuShips] 테스트용 고정 배치
      */
     constructor(opts = {}) {
       this.rng = opts.rng || Math.random;
-      this.player = createSide(opts.playerShips || placeFleet(this.rng));
-      this.cpu = createSide(opts.cpuShips || placeFleet(this.rng));
+      this.fleet = (opts.fleet || FLEET).slice();
+      this.player = createSide(opts.playerShips || placeFleet(this.rng, this.fleet));
+      this.cpu = createSide(opts.cpuShips || placeFleet(this.rng, this.fleet));
       this.state = STATE.READY;
       this.turn = 'player';
       this.winner = null;
@@ -225,16 +330,38 @@
     other(key) { return key === 'player' ? 'cpu' : 'player'; }
     targetBoard(attacker) { return this[this.other(attacker)].board; }
 
+    /** 시작 전에만 함대 구성을 바꿀 수 있다. CPU 함대는 같은 구성으로 새로 배치한다. */
+    setFleet(fleet) {
+      if (this.state !== STATE.READY || !fleet.length || !canPlaceFleet(fleet)) return false;
+      this.fleet = fleet.slice();
+      this.cpu = createSide(placeFleet(this.rng, this.fleet));
+      return true;
+    }
+
+    /** 시작 전 플레이어 배치 반영. 배치 중에는 일부(항구에 남은 배 제외)만 있어도 된다. */
+    setPlayerShips(ships) {
+      if (this.state !== STATE.READY) return false;
+      this.player = createSide(ships);
+      return true;
+    }
+
     /** 시작 전에만 플레이어 함대를 다시 무작위 배치할 수 있다. */
     rerollPlayerFleet() {
       if (this.state !== STATE.READY) return false;
-      this.player = createSide(placeFleet(this.rng));
+      this.player = createSide(placeFleet(this.rng, this.fleet));
       return true;
+    }
+
+    /** 플레이어의 배치가 함대 구성과 같고 규칙에 맞아야 시작할 수 있다. */
+    canStart() {
+      const ships = this.player.board.ships;
+      return this.state === STATE.READY &&
+        sameFleet(ships.map((s) => s.length), this.fleet) && validateShips(ships);
     }
 
     /** 플레이어 선공으로 시작 */
     start() {
-      if (this.state !== STATE.READY) return false;
+      if (!this.canStart()) return false;
       this.turn = 'player';
       this.state = STATE.PLAYER_TURN;
       this._beginTurn(this.player); // 첫 턴도 게이지에 포함
@@ -364,7 +491,7 @@
   global.Battleship = {
     SIZE, FLEET, NUKE_EVERY, NUKE_MAX, STATE,
     toIndex, rowOf, colOf, inBounds, coordName, neighbors8, area3x3,
-    mulberry32, shuffle, placeFleet, createBoard, isOpen, attackCell, allSunk, publicView,
+    mulberry32, shuffle, positions, placeFleet, canPlaceFleet, validateShips, sameFleet, createBoard, isOpen, attackCell, allSunk, publicView,
     Game,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

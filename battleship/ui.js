@@ -10,7 +10,10 @@
   const AI = window.BattleshipAI;
   const Sound = window.BattleshipSound;
   const Ships = window.BattleshipShips;
+  const SetupMod = window.BattleshipSetup;
   const S = B.STATE;
+
+  const ARRANGE_HINT = '배를 끌어서 옮기고, 클릭하면 가로/세로로 회전합니다. 준비되면 [게임 시작]을 누르세요.';
 
   const RESOLVE_MS = 450;   // 포격 결과를 보여주는 동안 입력 차단
   const CPU_GAP_MS = 350;   // CPU 포격 사이 추가 대기 (총 0.8초 간격)
@@ -25,9 +28,12 @@
     playerNuke: $('player-nuke'), cpuNuke: $('cpu-nuke'),
     reroll: $('btn-reroll'), start: $('btn-start'), nuke: $('btn-nuke'),
     cancel: $('btn-cancel'), restart: $('btn-restart'),
+    harbor: $('harbor'), harborRows: $('harbor-rows'),
   };
 
   let game = null;
+  let setup = null;     // 시작 전 함대 구성·배치 (BattleshipSetup.FleetSetup)
+  let drag = null;      // 끌기 중인 배 정보
   let gen = 0;          // 새 게임마다 증가. 이전 게임에서 예약된 콜백을 무효화한다.
   let timers = [];
   let hoverIdx = null;  // 핵폭탄 조준 중 마우스 위치
@@ -106,7 +112,37 @@
     board.ships.forEach((s, k) => {
       layer.els[k].hidden = !(showAll || s.sunk);
       layer.els[k].classList.toggle('sunk', s.sunk);
+      layer.els[k].classList.toggle('dragging', !!(drag && drag.moved && s.tag === drag.id));
     });
+  }
+
+  // ---------- 항구 (함대 구성 + 미배치 배) ----------
+
+  function renderHarbor() {
+    els.harborRows.innerHTML = SetupMod.TYPES.map((len) => {
+      const count = setup.count(len);
+      const waiting = setup.harborCount(len);
+      const name = Ships.NAMES[len];
+      return `<div class="dock${waiting ? ' waiting' : ''}">
+        <div class="dock-ship${waiting ? ' available' : ''}" data-len="${len}"
+             title="${waiting ? '끌어서 격자에 배치' : '항구에 대기 중인 배 없음'}">${Ships.svg(len, 'H')}</div>
+        <div class="dock-name">${name} <small>${len}칸</small></div>
+        <div class="stepper" aria-label="${name} 수량">
+          <button type="button" data-len="${len}" data-d="-1" ${setup.canChange(len, -1) ? '' : 'disabled'} aria-label="${name} 줄이기">−</button>
+          <span>${count}척</span>
+          <button type="button" data-len="${len}" data-d="1" ${setup.canChange(len, 1) ? '' : 'disabled'} aria-label="${name} 늘리기">+</button>
+        </div>
+        <div class="dock-wait">미배치 <b>${waiting}</b>척</div>
+      </div>`;
+    }).join('');
+    els.harbor.classList.toggle('drop-target', !!(drag && drag.moved && drag.overHarbor && drag.source === 'board'));
+  }
+
+  /** 항구에 남은 배 안내 */
+  function harborMessage() {
+    const left = setup.ships.filter((s) => !s.cells).length;
+    return left ? `항구에 ${left}척이 남아 있습니다. 모두 격자에 배치해야 시작할 수 있습니다.`
+                : '모든 배를 배치했습니다. [게임 시작]을 누르세요.';
   }
 
   const playerCells = buildBoard(els.playerBoard);
@@ -132,12 +168,17 @@
     const playerCanFire = st === S.PLAYER_TURN;
     const targeting = st === S.PLAYER_NUKE_TARGETING;
 
-    // 내 격자: 함선 항상 표시
+    // 내 격자: 함선 항상 표시. 배치 중이면 끌어다 놓을 자리와 밀려날 배를 표시
+    const pv = drag && drag.moved && drag.preview;
+    const pushCells = pv ? pv.conflicts.flatMap((id) => setup.ship(id).cells) : [];
     playerCells.forEach((el, i) => {
       const cls = cellClass(game.player.board, i, true, false);
       if (lastCpuShots.includes(i)) cls.push('last');
+      if (pv && pv.cells.includes(i)) cls.push('drop', pv.conflicts.length ? 'drop-push' : 'drop-ok');
+      if (pushCells.includes(i)) cls.push('push-ship');
       el.className = cls.join(' ');
     });
+    els.playerBoard.classList.toggle('arrange', st === S.READY);
 
     // CPU 격자: 격침된 함선만 공개 (게임 종료 시 전체 공개)
     let preview = [], previewValid = false;
@@ -170,6 +211,9 @@
     renderNuke(els.cpuNuke, game.cpu);
 
     els.reroll.hidden = els.start.hidden = st !== S.READY;
+    els.start.disabled = !setup.allPlaced();
+    els.harbor.hidden = st !== S.READY;
+    if (st === S.READY) renderHarbor();
     els.nuke.hidden = st === S.READY || over || targeting;
     els.nuke.disabled = !(playerCanFire && game.player.nukes > 0);
     els.cancel.hidden = !targeting;
@@ -179,7 +223,10 @@
   function renderTurn() {
     let key, text;
     switch (game.state) {
-      case S.READY: key = 'ready'; text = '배치를 확인하고 게임을 시작하세요'; break;
+      case S.READY:
+        key = 'ready';
+        text = setup.allPlaced() ? '배치를 확인하고 게임을 시작하세요' : '항구에 남은 배를 배치하세요';
+        break;
       case S.PLAYER_NUKE_TARGETING: key = 'targeting'; text = '☢ 핵폭탄 조준 중'; break;
       case S.GAME_OVER: key = game.winner === 'player' ? 'victory' : 'defeat'; text = game.winner === 'player' ? 'VICTORY' : 'DEFEAT'; break;
       default: key = game.turn; text = game.turn === 'player' ? '플레이어 차례' : 'CPU 차례';
@@ -298,16 +345,27 @@
     if (out) resolve(out);
   }
 
+  /** 새 게임: 함대 구성은 이전 게임 것을 유지하고 배치만 새로 무작위로 */
   function newGame() {
     gen++;
     timers.forEach(clearTimeout);
     timers = [];
-    game = new B.Game();
+    cancelDrag();
+    if (!setup) setup = new SetupMod.FleetSetup(B.FLEET);
+    setup.randomize();
+    game = new B.Game({ fleet: setup.fleet(), playerShips: setup.placedShips() });
     hoverIdx = null;
     lastCpuShots = [];
     lastTurnKey = '';
     [...playerCells, ...cpuCells].forEach((el) => (el.firstChild.className = 'fx'));
-    setMessage('함선 배치를 확인하고 [게임 시작]을 누르세요.');
+    setMessage(ARRANGE_HINT);
+    render();
+  }
+
+  /** 배치 화면의 변경을 게임에 반영 (구성이 바뀌면 CPU 함대도 같은 구성으로 다시 배치) */
+  function syncSetup(fleetChanged = false) {
+    if (fleetChanged) game.setFleet(setup.fleet());
+    game.setPlayerShips(setup.placedShips());
     render();
   }
 
@@ -336,8 +394,16 @@
     if (hoverIdx != null) { hoverIdx = null; render(); }
   });
 
-  els.reroll.addEventListener('click', () => { if (game.rerollPlayerFleet()) render(); });
+  els.reroll.addEventListener('click', () => {
+    if (game.state !== S.READY) return;
+    setup.randomize();
+    setMessage(ARRANGE_HINT);
+    syncSetup();
+  });
   els.start.addEventListener('click', () => {
+    if (game.state !== S.READY) return;
+    if (!setup.allPlaced()) { setMessage(harborMessage()); return; }
+    game.setPlayerShips(setup.placedShips());
     if (game.start()) { setMessage('CPU 격자에서 공격할 칸을 클릭하세요.'); render(); }
   });
   els.nuke.addEventListener('click', () => {
@@ -348,6 +414,133 @@
   document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelNuke(); });
   els.restart.addEventListener('click', newGame);
+
+  // ---------- 배치: 수량 변경 ----------
+
+  els.harborRows.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-d]');
+    if (!btn || game.state !== S.READY) return;
+    const len = Number(btn.dataset.len), d = Number(btn.dataset.d);
+    if (!setup.change(len, d)) return;
+    setMessage(d > 0 ? `${Ships.NAMES[len]} 1척을 항구에 추가했습니다. 끌어서 배치하세요.` : harborMessage());
+    syncSetup(true);
+  });
+
+  // ---------- 배치: 끌어서 이동 / 클릭해서 회전 ----------
+
+  const DRAG_THRESHOLD = 5; // 이만큼(px) 움직여야 끌기로 본다. 그보다 적으면 클릭(회전)
+
+  // 격자 위의 배를 누르면 끌기 시작 (잡은 칸이 배의 몇 번째 칸인지 기억)
+  els.playerBoard.addEventListener('pointerdown', (e) => {
+    if (game.state !== S.READY || e.button !== 0) return;
+    const i = cellIndex(e);
+    if (i == null) return;
+    const id = setup.shipAt(i);
+    if (id == null) return;
+    const s = setup.ship(id);
+    beginDrag(e, { id, k: s.cells.indexOf(i), dir: s.dir, length: s.length, source: 'board' });
+  });
+
+  // 항구에 대기 중인 배를 누르면 끌기 시작
+  els.harborRows.addEventListener('pointerdown', (e) => {
+    const dock = e.target.closest('.dock-ship.available');
+    if (!dock || game.state !== S.READY || e.button !== 0) return;
+    const s = setup.harborShip(Number(dock.dataset.len));
+    if (s) beginDrag(e, { id: s.id, k: 0, dir: s.dir, length: s.length, source: 'harbor' });
+  });
+
+  function beginDrag(e, d) {
+    e.preventDefault();
+    drag = Object.assign(d, { x0: e.clientX, y0: e.clientY, moved: false, preview: null, overHarbor: false });
+  }
+
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < DRAG_THRESHOLD) return;
+      drag.moved = true;
+      createGhost();
+      document.body.classList.add('dragging-ship');
+    }
+    moveGhost(e);
+    updateDropTarget(e);
+    render();
+  });
+
+  document.addEventListener('pointerup', (e) => {
+    if (!drag) return;
+    const d = drag;
+    if (d.moved) updateDropTarget(e);
+    cancelDrag();
+
+    if (!d.moved) {
+      // 클릭: 격자 위의 배를 가로 ↔ 세로 회전
+      if (d.source === 'board') reportPlacement(setup.rotate(d.id));
+    } else if (d.preview) {
+      reportPlacement(setup.place(d.id, d.target.r, d.target.c, d.dir));
+    } else if (d.overHarbor && d.source === 'board') {
+      setup.toHarbor(d.id);
+      setMessage(`${Ships.NAMES[d.length]}을 항구로 보냈습니다. (모든 배를 배치해야 시작할 수 있습니다)`);
+    }
+    syncSetup();
+  });
+
+  document.addEventListener('pointercancel', () => { if (drag) { cancelDrag(); render(); } });
+
+  function cancelDrag() {
+    if (drag && drag.ghost) drag.ghost.remove();
+    drag = null;
+    document.body.classList.remove('dragging-ship');
+  }
+
+  /** 포인터 아래가 내 격자 칸이면 배가 놓일 위치를, 항구면 항구로 보내기를 준비 */
+  function updateDropTarget(e) {
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const cellEl = under && under.closest('#player-board .cell');
+    drag.preview = null;
+    drag.target = null;
+    drag.overHarbor = !cellEl && !!(under && under.closest('#harbor'));
+    if (!cellEl) return;
+    const t = Number(cellEl.dataset.i);
+    const r = B.rowOf(t) - (drag.dir === 'V' ? drag.k : 0);
+    const c = B.colOf(t) - (drag.dir === 'H' ? drag.k : 0);
+    drag.target = { r, c };
+    drag.preview = setup.preview(drag.id, r, c, drag.dir);
+  }
+
+  /** 포인터를 따라다니는 배 이미지 (격자 칸 크기에 맞춤) */
+  function createGhost() {
+    const a = playerCells[0].getBoundingClientRect();
+    const b = playerCells[1].getBoundingClientRect();
+    drag.cell = a.width;
+    drag.step = b.left - a.left;
+    const long = drag.step * (drag.length - 1) + drag.cell;
+    const g = document.createElement('div');
+    g.className = 'drag-ghost';
+    g.style.width = `${drag.dir === 'H' ? long : drag.cell}px`;
+    g.style.height = `${drag.dir === 'V' ? long : drag.cell}px`;
+    g.innerHTML = Ships.svg(drag.length, drag.dir);
+    document.body.appendChild(g);
+    drag.ghost = g;
+  }
+
+  function moveGhost(e) {
+    // 잡은 칸이 포인터 아래에 오도록
+    const along = drag.k * drag.step + drag.cell / 2;
+    const x = e.clientX - (drag.dir === 'H' ? along : drag.cell / 2);
+    const y = e.clientY - (drag.dir === 'V' ? along : drag.cell / 2);
+    drag.ghost.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  /** 배치 결과 안내: 밀려난 배, 항구로 간 배, 남은 배 */
+  function reportPlacement(res) {
+    if (!res) return;
+    const parts = [];
+    if (res.moved.length) parts.push(`겹치는 배 ${res.moved.length}척을 가까운 빈자리로 옮겼습니다.`);
+    if (res.harbored.length) parts.push(`빈자리가 없어 ${res.harbored.length}척을 항구로 보냈습니다.`);
+    parts.push(harborMessage());
+    setMessage(parts.join(' '));
+  }
 
   function cancelNuke() {
     if (game.cancelNuke()) { hoverIdx = null; setMessage('핵폭탄 사용을 취소했습니다.'); render(); }

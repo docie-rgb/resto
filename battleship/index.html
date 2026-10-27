@@ -27,6 +27,14 @@
 
   <p id="message" class="message"></p>
 
+  <section id="harbor" class="harbor" hidden>
+    <div class="harbor-head">
+      <h2>⚓ 항구</h2>
+      <span class="harbor-hint">수량을 정하고 배를 끌어 격자에 놓으세요. 격자의 배를 항구로 끌어오면 배치가 해제됩니다.</span>
+    </div>
+    <div id="harbor-rows" class="harbor-rows"></div>
+  </section>
+
   <footer class="controls">
     <div class="nuke-status">
       <div class="nuke-row"><span class="who">나</span><span id="player-nuke"></span></div>
@@ -45,6 +53,7 @@
   <script src="ai.js"></script>
   <script src="sound.js"></script>
   <script src="ships.js"></script>
+  <script src="setup.js"></script>
   <script src="ui.js"></script>
 </body>
 </html>

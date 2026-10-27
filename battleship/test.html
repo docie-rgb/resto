@@ -16,6 +16,7 @@
 <div id="out"></div>
 <script src="game.js"></script>
 <script src="ai.js"></script>
+<script src="setup.js"></script>
 <script>
 'use strict';
 const B = window.Battleship, AI = window.BattleshipAI, S = B.STATE;
@@ -361,6 +362,128 @@ test('AI 효율 (핵폭탄 없이 혼자 포격 시 평균 발수)', () => {
   }
   const avg = total / 100;
   check('무작위(약 95발)보다 효율적', avg < 80, `평균 ${avg.toFixed(1)}발`);
+});
+
+// ================= 함대 구성 / 배치 화면 =================
+section('함대 구성과 수량 상한');
+const Setup = window.BattleshipSetup;
+test('배치 가능 판정', () => {
+  check('기본 함대 배치 가능', B.canPlaceFleet(B.FLEET));
+  check('격자보다 긴 배는 불가', !B.canPlaceFleet([11]));
+  check('지나치게 많은 배는 불가 (2칸 40척)', !B.canPlaceFleet(Array(40).fill(2)));
+  const t0 = performance.now();
+  const caps = {};
+  [5, 4, 3, 2].forEach((len) => {
+    let n = 0;
+    while (B.canPlaceFleet(Array(n + 1).fill(len))) n++;
+    caps[len] = n;
+  });
+  const ms = performance.now() - t0;
+  check('종류별 단독 최대 수량 계산', caps[5] >= 5 && caps[2] >= 15, `5칸 ${caps[5]} · 4칸 ${caps[4]} · 3칸 ${caps[3]} · 2칸 ${caps[2]}척 (${ms.toFixed(0)}ms)`);
+  let bad = 0;
+  [5, 4, 3, 2].forEach((len) => {
+    for (let s = 1; s <= 10; s++) {
+      const ships = B.placeFleet(B.mulberry32(s * len), Array(caps[len]).fill(len));
+      if (!B.validateShips(ships) || ships.length !== caps[len]) bad++;
+    }
+  });
+  check('상한 수량에서도 무작위 배치가 항상 유효', bad === 0);
+});
+test('사용자 지정 함대로 게임 진행', () => {
+  let errors = 0, unfinished = 0;
+  for (let s = 1; s <= 40; s++) {
+    const rng = B.mulberry32(s);
+    const fleet = [];
+    [5, 4, 3, 2].forEach((len) => { const n = Math.floor(rng() * 4); for (let k = 0; k < n; k++) fleet.push(len); });
+    if (!fleet.length) fleet.push(2);
+    if (!B.canPlaceFleet(fleet)) continue;
+    const g = new B.Game({ rng, fleet });
+    if (!B.validateShips(g.player.board.ships) || !B.sameFleet(g.cpu.board.ships.map((x) => x.length), fleet)) errors++;
+    g.start();
+    let guard = 0;
+    while (g.state !== S.GAME_OVER && guard++ < 400) {
+      const me = g.turn;
+      const act = AI.decide(B.publicView(g[g.other(me)].board), g[me].nukes > 0, rng);
+      if (me === 'player' && act.type === 'nuke') g.enterNukeTargeting();
+      const out = act.type === 'nuke' ? g.nuke(me, act.index) : g.fire(me, act.index);
+      if (!out) { errors++; break; }
+      if (!out.gameOver) g.finishResolve();
+    }
+    if (g.state !== S.GAME_OVER) unfinished++;
+  }
+  check('무작위 구성 40판: 배치 유효, 규칙 위반 없이 종료', errors === 0 && unfinished === 0, `오류 ${errors}, 미종료 ${unfinished}`);
+  check('공개 정보의 남은 함선 = 미격침 함선 길이', (() => {
+    const b = B.createBoard([ship('H', 'A1', 'B1'), ship('H', 'D1', 'E1', 'F1')]);
+    B.attackCell(b, idx('A1')); B.attackCell(b, idx('B1'));
+    return B.publicView(b).remaining.join() === '3';
+  })());
+});
+
+section('배치 화면 (수량 · 끌기 · 회전 · 항구)');
+test('수량 설정', () => {
+  const st = new Setup.FleetSetup([2]);
+  check('마지막 1척은 줄일 수 없음 (최소 1척)', !st.canChange(2, -1) && !st.change(2, -1));
+  check('늘린 배는 항구로', st.change(5, 1) && st.harborCount(5) === 1 && !st.allPlaced());
+  const g = new B.Game({ fleet: st.fleet(), playerShips: st.placedShips() });
+  check('항구에 배가 남아 있으면 게임 시작 불가', !g.canStart() && !g.start());
+  st.randomize();
+  g.setPlayerShips(st.placedShips());
+  check('모두 배치하면 시작 가능', st.allPlaced() && g.start());
+
+  const full = new Setup.FleetSetup(B.FLEET);
+  let n = 0;
+  while (full.canChange(2, 1)) { full.change(2, 1); n++; }
+  check('규칙상 더 넣을 수 없으면 늘리기 불가', !full.change(2, 1) && B.canPlaceFleet(full.fleet()) && !B.canPlaceFleet(full.fleet().concat(2)), `기본 함대에 2칸 ${n}척 추가 가능`);
+  full.randomize();
+  check('상한까지 늘린 함대도 무작위 배치 가능', full.allPlaced() && B.validateShips(full.placedShips()));
+  full.change(5, -1);
+  check('줄이면 해당 종류가 빠짐', full.count(5) === 0);
+});
+test('이동 · 밀어내기 · 회전 · 항구', () => {
+  const st = new Setup.FleetSetup([4, 3, 2]);
+  st.clear();
+  const [a, b, c] = st.ships;
+  st.place(a.id, 0, 0, 'H');               // A1~D1
+  st.place(b.id, 4, 4, 'V');               // E5~E7
+  check('빈자리 배치', B.validateShips(st.placedShips()) && a.cells[0] === idx('A1') && b.cells.length === 3);
+  const res = st.place(c.id, 1, 1, 'H');   // B2~C2: 전함과 닿음 → 전함을 밀어냄
+  check('겹치거나 닿는 배는 가까운 빈자리로 밀려남', res.moved.includes(a.id) && B.validateShips(st.placedShips()) && c.cells[0] === idx('B2'));
+  st.place(b.id, 8, 9, 'V');
+  check('격자 밖이면 안쪽으로 맞춤', b.cells[0] === idx('J8') && b.cells[2] === idx('J10'));
+  const before = b.dir;
+  st.rotate(b.id);
+  check('클릭 회전: 가로/세로 전환 후에도 격자 안', b.dir !== before && B.validateShips(st.placedShips()) && b.cells.every((i) => i >= 0 && i < 100));
+  st.toHarbor(b.id);
+  check('항구로 보내기', !b.cells && st.harborCount(3) === 1 && !st.allPlaced());
+
+  // 빈자리가 없으면 항구로: 2칸 상한 + 그 위에 계속 놓기
+  const crowd = new Setup.FleetSetup([2]);
+  while (crowd.canChange(2, 1)) crowd.change(2, 1);
+  crowd.randomize();
+  let harbored = 0;
+  const rng = B.mulberry32(5);
+  for (let t = 0; t < 30; t++) {
+    const s = crowd.ships[Math.floor(rng() * crowd.ships.length)];
+    const r = crowd.place(s.id, Math.floor(rng() * 10), Math.floor(rng() * 10), rng() < 0.5 ? 'H' : 'V');
+    harbored += r.harbored.length;
+  }
+  check('자리가 없을 정도로 꽉 차면 밀려난 배는 항구로', harbored > 0 && B.validateShips(crowd.placedShips()), `항구행 ${harbored}척`);
+});
+test('무작위 조작 1000회 후에도 배치 규칙 유지', () => {
+  const rng = B.mulberry32(77);
+  const st = new Setup.FleetSetup(B.FLEET, rng);
+  st.randomize();
+  let bad = 0;
+  for (let t = 0; t < 1000; t++) {
+    const s = st.ships[Math.floor(rng() * st.ships.length)];
+    const op = rng();
+    if (op < 0.6) st.place(s.id, Math.floor(rng() * 10), Math.floor(rng() * 10), rng() < 0.5 ? 'H' : 'V');
+    else if (op < 0.85) st.rotate(s.id);
+    else if (op < 0.95) st.toHarbor(s.id);
+    else st.change([5, 4, 3, 2][Math.floor(rng() * 4)], rng() < 0.5 ? 1 : -1);
+    if (!B.validateShips(st.placedShips()) || !B.canPlaceFleet(st.fleet()) || st.ships.length < 1) bad++;
+  }
+  check('겹침·인접·격자 밖 없음, 구성은 항상 배치 가능', bad === 0, `위반 ${bad}회`);
 });
 
 const sum = document.getElementById('summary');
